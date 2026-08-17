@@ -3,13 +3,11 @@ const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
 const path = require('path');
 
-// Suporte para fetch em versões do Node.js anteriores à v18
 let fetch = global.fetch;
 if (!fetch) {
   fetch = require('node-fetch');
 }
 
-// Inicialização segura do Firebase Admin
 const { initializeApp, getApps, cert } = require("firebase-admin/app");
 const { getDatabase, ServerValue } = require("firebase-admin/database");
 
@@ -19,11 +17,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// CONFIGURAÇÃO DO MERCADO PAGO
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 
-// INICIALIZAÇÃO DO FIREBASE ADMIN
 try {
   const serviceAccount = require("./firebase-key.json");
   if (getApps().length === 0) {
@@ -49,7 +45,7 @@ function resolveUserKey(metadata, payer) {
 }
 
 /* =========================================================
-   FUNÇÃO AUXILIAR: PROCESSAR E SALVAR PEDIDO APROVADO
+   PROCESSAR E SALVAR PEDIDO DENTRO DE /users/${userKey}/pedidos
    ========================================================= */
 async function processApprovedOrder(paymentData) {
   const paymentId = String(paymentData.id);
@@ -58,16 +54,16 @@ async function processApprovedOrder(paymentData) {
   
   const userKey = resolveUserKey(metadata, payer);
   if (!userKey) {
-    console.error(`[FIREBASE] Não foi possível identificar a chave do usuário para o pagamento #${paymentId}`);
+    console.error(`[FIREBASE] Não foi possível identificar o userKey para o pagamento #${paymentId}`);
     return;
   }
 
-  const pedidoRef = db.ref(`pedidos/${userKey}/${paymentId}`);
+  // Novo caminho: users/${userKey}/pedidos/${paymentId}
+  const pedidoRef = db.ref(`users/${userKey}/pedidos/${paymentId}`);
   const snapshot = await pedidoRef.once('value');
 
-  // Se o pedido já consta como aprovado, não reprocessa
   if (snapshot.exists() && snapshot.val().status === 'approved') {
-    console.log(`[FIREBASE] Pedido #${paymentId} já foi processado anteriormente.`);
+    console.log(`[FIREBASE] Pedido #${paymentId} já processado.`);
     return;
   }
 
@@ -86,23 +82,22 @@ async function processApprovedOrder(paymentData) {
     cashbackProcessado: true
   };
 
-  // Salva no caminho padronizado: pedidos/${userKey}/${paymentId}
   await pedidoRef.update(orderData);
-  console.log(`[FIREBASE] Pedido #${paymentId} salvo/atualizado em pedidos/${userKey}/${paymentId}`);
+  console.log(`[FIREBASE] Pedido #${paymentId} salvo em users/${userKey}/pedidos/${paymentId}`);
 
-  // Processamento de Cashback (se houver)
+  // Processamento do Cashback dentro de /users/${userKey}
   const totalCashback = cartItems.reduce((acc, item) => acc + ((item.cashback || 0) * (item.qtd || 1)), 0);
 
   if (totalCashback > 0) {
     const userRef = db.ref(`users/${userKey}`);
-    
     await userRef.update({
       email: customerEmail,
       saldo: ServerValue.increment(totalCashback),
       cashback: ServerValue.increment(totalCashback)
     });
 
-    const transacoesRef = db.ref('transacoes');
+    // Salva a transação em /users/${userKey}/transacoes
+    const transacoesRef = db.ref(`users/${userKey}/transacoes`);
     await transacoesRef.push({
       userId: userKey,
       emailDestino: customerEmail.toLowerCase(),
@@ -114,14 +109,10 @@ async function processApprovedOrder(paymentData) {
   }
 }
 
-/* =========================================================
-   ROTAS
-   ========================================================= */
 app.get('/pedidos', (req, res) => {
   res.sendFile(path.join(__dirname, 'pedidos.html'));
 });
 
-// 1. CRIAÇÃO DO PAGAMENTO PIX
 app.post('/create_pix_payment', async (req, res) => {
   try {
     const { cart, payer, userId } = req.body;
@@ -166,7 +157,6 @@ app.post('/create_pix_payment', async (req, res) => {
   }
 });
 
-// 2. CHECAGEM DE STATUS DO PAGAMENTO (Retorna APENAS o status para o front)
 app.get('/check_payment_status/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -187,7 +177,6 @@ app.get('/check_payment_status/:id', async (req, res) => {
   }
 });
 
-// 3. WEBHOOK MERCADO PAGO
 app.post('/webhook', async (req, res) => {
   try {
     const { type, data } = req.body;
@@ -210,12 +199,14 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// 4. SOLICITAÇÃO DE SAQUE
+/* =========================================================
+   SOLICITAÇÃO DE SAQUE DENTRO DE /users/${userKey}/saques
+   ========================================================= */
 app.post('/send_pix_payout', async (req, res) => {
   try {
-    const { pixKey, amount, description } = req.body;
-    if (!pixKey || !amount || Number(amount) <= 0) {
-      return res.status(400).json({ error: 'Chave PIX e valor válido são obrigatórios.' });
+    const { pixKey, amount, description, userId } = req.body;
+    if (!pixKey || !amount || Number(amount) <= 0 || !userId) {
+      return res.status(400).json({ error: 'Chave PIX, valor e usuário são obrigatórios.' });
     }
 
     const payoutRequest = {
@@ -227,7 +218,8 @@ app.post('/send_pix_payout', async (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    await db.ref('saques').push(payoutRequest);
+    // Salva o saque dentro de /users/${userId}/saques
+    await db.ref(`users/${userId}/saques`).push(payoutRequest);
     return res.json({ success: true, message: "Solicitação enviada com sucesso!" });
   } catch (error) {
     console.error("Erro ao registrar saque:", error);
