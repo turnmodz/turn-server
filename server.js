@@ -9,9 +9,9 @@ if (!fetch) {
   fetch = require('node-fetch');
 }
 
-// 1. Importação segura dos submódulos do Firebase Admin
+// Inicialização segura do Firebase Admin
 const { initializeApp, getApps, cert } = require("firebase-admin/app");
-const { getDatabase } = require("firebase-admin/database");
+const { getDatabase, ServerValue } = require("firebase-admin/database");
 
 const app = express();
 
@@ -19,11 +19,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// CONFIGURAÇÃO DO MERCADO PAGO E FIREBASE
+// CONFIGURAÇÃO DO MERCADO PAGO
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 
-// 2. Inicialização do Firebase Admin SDK
+// INICIALIZAÇÃO DO FIREBASE ADMIN
 try {
   const serviceAccount = require("./firebase-key.json");
   if (getApps().length === 0) {
@@ -42,57 +42,69 @@ function sanitizeEmail(email) {
   return email ? email.toLowerCase().replace(/\./g, '_') : '';
 }
 
+function resolveUserKey(metadata, payer) {
+  if (metadata && metadata.user_id) return metadata.user_id;
+  const email = (metadata && metadata.customer_email) || (payer && payer.email) || "";
+  return sanitizeEmail(email);
+}
+
 /* =========================================================
-   FUNÇÃO AUXILIAR: SALVAR PEDIDO APENAS SE NÃO EXISTIR
+   FUNÇÃO AUXILIAR: PROCESSAR E SALVAR PEDIDO APROVADO
    ========================================================= */
 async function processApprovedOrder(paymentData) {
-  const paymentId = paymentData.id;
-  const pedidosRef = db.ref('pedidos');
+  const paymentId = String(paymentData.id);
+  const payer = paymentData.payer || {};
+  const metadata = paymentData.metadata || {};
+  
+  const userKey = resolveUserKey(metadata, payer);
+  if (!userKey) {
+    console.error(`[FIREBASE] Não foi possível identificar a chave do usuário para o pagamento #${paymentId}`);
+    return;
+  }
 
-  // Verifica se o pedido já foi gravado
-  const snapshot = await pedidosRef.orderByChild('idPedidoMercadoPago').equalTo(Number(paymentId)).once('value');
+  const pedidoRef = db.ref(`pedidos/${userKey}/${paymentId}`);
+  const snapshot = await pedidoRef.once('value');
 
-  if (snapshot.exists()) {
+  // Se o pedido já consta como aprovado, não reprocessa
+  if (snapshot.exists() && snapshot.val().status === 'approved') {
     console.log(`[FIREBASE] Pedido #${paymentId} já foi processado anteriormente.`);
     return;
   }
 
-  const customerEmail = paymentData.metadata?.customer_email || paymentData.payer?.email || "cliente@email.com";
-  const cartItems = paymentData.metadata?.cart || [];
+  const customerEmail = metadata.customer_email || payer.email || "cliente@email.com";
+  const cartItems = metadata.cart || [];
 
   const orderData = {
-    id: `TM-${Math.floor(1000 + Math.random() * 9000)}`,
+    id: paymentId,
     idPedidoMercadoPago: Number(paymentId),
-    date: new Date().toLocaleDateString('pt-BR'),
+    data: new Date().toISOString(),
     status: 'approved',
     statusText: 'Pagamento Aprovado',
-    customerEmail: customerEmail.trim().toLowerCase(),
-    paymentMethod: 'PIX',
-    total: paymentData.transaction_amount || 0,
-    items: cartItems,
+    clienteEmail: customerEmail.trim().toLowerCase(),
+    valorTotal: paymentData.transaction_amount || 0,
+    itens: cartItems,
     cashbackProcessado: true
   };
 
-  // Salva o pedido de forma única
-  await pedidosRef.push(orderData);
-  console.log(`[FIREBASE] Novo pedido #${paymentId} salvo com sucesso!`);
+  // Salva no caminho padronizado: pedidos/${userKey}/${paymentId}
+  await pedidoRef.update(orderData);
+  console.log(`[FIREBASE] Pedido #${paymentId} salvo/atualizado em pedidos/${userKey}/${paymentId}`);
 
-  // Processamento de cashback (se houver itens)
+  // Processamento de Cashback (se houver)
   const totalCashback = cartItems.reduce((acc, item) => acc + ((item.cashback || 0) * (item.qtd || 1)), 0);
 
   if (totalCashback > 0) {
-    const emailKey = sanitizeEmail(customerEmail);
-    const userRef = db.ref(`usuarios/${emailKey}`);
+    const userRef = db.ref(`users/${userKey}`);
     
-    // Atualiza saldo via increment
-    const { ServerValue } = require("firebase-admin/database");
     await userRef.update({
       email: customerEmail,
-      saldo: ServerValue.increment(totalCashback)
+      saldo: ServerValue.increment(totalCashback),
+      cashback: ServerValue.increment(totalCashback)
     });
 
     const transacoesRef = db.ref('transacoes');
     await transacoesRef.push({
+      userId: userKey,
       emailDestino: customerEmail.toLowerCase(),
       valor: totalCashback,
       tipo: 'cashback',
@@ -112,7 +124,7 @@ app.get('/pedidos', (req, res) => {
 // 1. CRIAÇÃO DO PAGAMENTO PIX
 app.post('/create_pix_payment', async (req, res) => {
   try {
-    const { cart, payer } = req.body;
+    const { cart, payer, userId } = req.body;
     if (!cart || cart.length === 0) return res.status(400).json({ error: 'Carrinho vazio' });
 
     const totalAmount = cart.reduce((sum, item) => sum + (Number(item.preco) * Number(item.qtd)), 0);
@@ -135,7 +147,8 @@ app.post('/create_pix_payment', async (req, res) => {
       },
       metadata: {
         cart: cart,
-        customer_email: customerEmail
+        customer_email: customerEmail,
+        user_id: userId || null
       }
     };
 
@@ -153,19 +166,17 @@ app.post('/create_pix_payment', async (req, res) => {
   }
 });
 
-// 2. CHECAGEM DE STATUS (Retorna APENAS os status do pagamento)
+// 2. CHECAGEM DE STATUS DO PAGAMENTO (Retorna APENAS o status para o front)
 app.get('/check_payment_status/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const payment = new Payment(client);
     const paymentData = await payment.get({ id });
 
-    // Se aprovado, processa no Firebase garantindo que não haverá duplicatas
     if (paymentData.status === 'approved') {
       await processApprovedOrder(paymentData);
     }
 
-    // Retorna EXCLUSIVAMENTE o status para a chamada frontend
     res.json({
       status: paymentData.status,
       status_detail: paymentData.status_detail
