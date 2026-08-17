@@ -20,8 +20,16 @@ app.use(express.static(__dirname));
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 
+// Inicialização segura do Firebase Admin
 try {
-  const serviceAccount = require("./firebase-key.json");
+  let serviceAccount;
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  } else {
+    serviceAccount = require("./firebase-key.json");
+  }
+
   if (getApps().length === 0) {
     initializeApp({
       credential: cert(serviceAccount),
@@ -29,7 +37,7 @@ try {
     });
   }
 } catch (e) {
-  console.warn("[FIREBASE ADMIN WARN] Chave local firebase-key.json não encontrada ou inválida.");
+  console.warn("[FIREBASE ADMIN WARN] Falha ao carregar credenciais do Firebase:", e.message);
 }
 
 const db = getDatabase();
@@ -91,7 +99,6 @@ async function processApprovedOrder(paymentData) {
     if (totalCashback > 0) {
       const userRef = db.ref(`users/${userKey}`);
       
-      // Atualização atômica segura via transação no Firebase Admin
       await userRef.transaction((currentUserData) => {
         if (!currentUserData) {
           return {
@@ -108,7 +115,6 @@ async function processApprovedOrder(paymentData) {
         };
       });
 
-      // Salva a transação do Cashback
       const transacoesRef = db.ref(`users/${userKey}/transacoes`);
       await transacoesRef.push({
         userId: userKey,
