@@ -9,7 +9,7 @@ if (!fetch) {
 }
 
 const { initializeApp, getApps, cert } = require("firebase-admin/app");
-const { getDatabase, ServerValue } = require("firebase-admin/database");
+const { getDatabase } = require("firebase-admin/database");
 
 const app = express();
 
@@ -48,64 +48,79 @@ function resolveUserKey(metadata, payer) {
    PROCESSAR E SALVAR PEDIDO DENTRO DE /users/${userKey}/pedidos
    ========================================================= */
 async function processApprovedOrder(paymentData) {
-  const paymentId = String(paymentData.id);
-  const payer = paymentData.payer || {};
-  const metadata = paymentData.metadata || {};
-  
-  const userKey = resolveUserKey(metadata, payer);
-  if (!userKey) {
-    console.error(`[FIREBASE] Não foi possível identificar o userKey para o pagamento #${paymentId}`);
-    return;
-  }
+  try {
+    const paymentId = String(paymentData.id);
+    const payer = paymentData.payer || {};
+    const metadata = paymentData.metadata || {};
+    
+    const userKey = resolveUserKey(metadata, payer);
+    if (!userKey) {
+      console.error(`[FIREBASE] Não foi possível identificar o userKey para o pagamento #${paymentId}`);
+      return;
+    }
 
-  // Novo caminho: users/${userKey}/pedidos/${paymentId}
-  const pedidoRef = db.ref(`users/${userKey}/pedidos/${paymentId}`);
-  const snapshot = await pedidoRef.once('value');
+    const pedidoRef = db.ref(`users/${userKey}/pedidos/${paymentId}`);
+    const snapshot = await pedidoRef.once('value');
 
-  if (snapshot.exists() && snapshot.val().status === 'approved') {
-    console.log(`[FIREBASE] Pedido #${paymentId} já processado.`);
-    return;
-  }
+    if (snapshot.exists() && snapshot.val().status === 'approved') {
+      console.log(`[FIREBASE] Pedido #${paymentId} já processado.`);
+      return;
+    }
 
-  const customerEmail = metadata.customer_email || payer.email || "cliente@email.com";
-  const cartItems = metadata.cart || [];
+    const customerEmail = metadata.customer_email || payer.email || "cliente@email.com";
+    const cartItems = metadata.cart || [];
 
-  const orderData = {
-    id: paymentId,
-    idPedidoMercadoPago: Number(paymentId),
-    data: new Date().toISOString(),
-    status: 'approved',
-    statusText: 'Pagamento Aprovado',
-    clienteEmail: customerEmail.trim().toLowerCase(),
-    valorTotal: paymentData.transaction_amount || 0,
-    itens: cartItems,
-    cashbackProcessado: true
-  };
+    const orderData = {
+      id: paymentId,
+      idPedidoMercadoPago: Number(paymentId),
+      data: new Date().toISOString(),
+      status: 'approved',
+      statusText: 'Pagamento Aprovado',
+      clienteEmail: customerEmail.trim().toLowerCase(),
+      valorTotal: paymentData.transaction_amount || 0,
+      itens: cartItems,
+      cashbackProcessado: true
+    };
 
-  await pedidoRef.update(orderData);
-  console.log(`[FIREBASE] Pedido #${paymentId} salvo em users/${userKey}/pedidos/${paymentId}`);
+    await pedidoRef.update(orderData);
+    console.log(`[FIREBASE] Pedido #${paymentId} salvo em users/${userKey}/pedidos/${paymentId}`);
 
-  // Processamento do Cashback dentro de /users/${userKey}
-  const totalCashback = cartItems.reduce((acc, item) => acc + ((item.cashback || 0) * (item.qtd || 1)), 0);
+    // Cálculo do Cashback
+    const totalCashback = cartItems.reduce((acc, item) => acc + ((Number(item.cashback) || 0) * (Number(item.qtd) || 1)), 0);
 
-  if (totalCashback > 0) {
-    const userRef = db.ref(`users/${userKey}`);
-    await userRef.update({
-      email: customerEmail,
-      saldo: ServerValue.increment(totalCashback),
-      cashback: ServerValue.increment(totalCashback)
-    });
+    if (totalCashback > 0) {
+      const userRef = db.ref(`users/${userKey}`);
+      
+      // Atualização atômica segura via transação no Firebase Admin
+      await userRef.transaction((currentUserData) => {
+        if (!currentUserData) {
+          return {
+            email: customerEmail,
+            saldo: totalCashback,
+            cashback: totalCashback
+          };
+        }
+        return {
+          ...currentUserData,
+          email: customerEmail,
+          saldo: (Number(currentUserData.saldo) || 0) + totalCashback,
+          cashback: (Number(currentUserData.cashback) || 0) + totalCashback
+        };
+      });
 
-    // Salva a transação em /users/${userKey}/transacoes
-    const transacoesRef = db.ref(`users/${userKey}/transacoes`);
-    await transacoesRef.push({
-      userId: userKey,
-      emailDestino: customerEmail.toLowerCase(),
-      valor: totalCashback,
-      tipo: 'cashback',
-      descricao: `Cashback referente ao pedido #${paymentId}`,
-      data: new Date().toISOString()
-    });
+      // Salva a transação do Cashback
+      const transacoesRef = db.ref(`users/${userKey}/transacoes`);
+      await transacoesRef.push({
+        userId: userKey,
+        emailDestino: customerEmail.toLowerCase(),
+        valor: totalCashback,
+        tipo: 'cashback',
+        descricao: `Cashback referente ao pedido #${paymentId}`,
+        data: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error(`[FIREBASE ERROR] Falha ao processar pedido #${paymentData.id}:`, err);
   }
 }
 
@@ -218,7 +233,6 @@ app.post('/send_pix_payout', async (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    // Salva o saque dentro de /users/${userId}/saques
     await db.ref(`users/${userId}/saques`).push(payoutRequest);
     return res.json({ success: true, message: "Solicitação enviada com sucesso!" });
   } catch (error) {
