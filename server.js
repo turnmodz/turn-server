@@ -66,7 +66,9 @@ async function processApprovedOrder(paymentData) {
     const payer = paymentData.payer || {};
     const metadata = paymentData.metadata || {};
     
-    const userKey = resolveUserKey(metadata, payer);
+    // Prioriza o userId (UID do Firebase) vindo dos metadados do Mercado Pago
+    const userKey = metadata.user_id || resolveUserKey(metadata, payer);
+    
     if (!userKey) {
       console.error(`[FIREBASE] Não foi possível identificar o userKey para o pagamento #${paymentId}`);
       return;
@@ -96,21 +98,16 @@ async function processApprovedOrder(paymentData) {
     };
 
     await pedidoRef.update(orderData);
-    console.log(`[FIREBASE] Pedido #${paymentId} salvo em users/${userKey}/pedidos/${paymentId}`);
+    console.log(`[FIREBASE] Pedido #${paymentId} salvo/atualizado em users/${userKey}/pedidos/${paymentId}`);
 
     // Cálculo do Cashback
     const totalCashback = cartItems.reduce((acc, item) => acc + ((Number(item.cashback) || 0) * (Number(item.qtd) || 1)), 0);
 
     if (totalCashback > 0) {
       const userRef = db.ref(`users/${userKey}`);
-      
       await userRef.transaction((currentUserData) => {
         if (!currentUserData) {
-          return {
-            email: customerEmail,
-            saldo: totalCashback,
-            cashback: totalCashback
-          };
+          return { email: customerEmail, saldo: totalCashback, cashback: totalCashback };
         }
         return {
           ...currentUserData,
@@ -118,16 +115,6 @@ async function processApprovedOrder(paymentData) {
           saldo: (Number(currentUserData.saldo) || 0) + totalCashback,
           cashback: (Number(currentUserData.cashback) || 0) + totalCashback
         };
-      });
-
-      const transacoesRef = db.ref(`users/${userKey}/transacoes`);
-      await transacoesRef.push({
-        userId: userKey,
-        emailDestino: customerEmail.toLowerCase(),
-        valor: totalCashback,
-        tipo: 'cashback',
-        descricao: `Cashback referente ao pedido #${paymentId}`,
-        data: new Date().toISOString()
       });
     }
   } catch (err) {
