@@ -20,12 +20,17 @@ app.use(express.static(__dirname));
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 
-// Inicialização segura do Firebase Admin
+// Inicialização segura do Firebase Admin com tratamento de quebra de linha da chave
 try {
   let serviceAccount;
 
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    
+    // Tratamento essencial para a chave privada funcionar na Render
+    if (serviceAccount.private_key) {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
   } else {
     serviceAccount = require("./firebase-key.json");
   }
