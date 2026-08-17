@@ -248,74 +248,34 @@ function sanitizeEmail(email) {
 }
 
 // Rota de checagem que valida o pagamento e envia o cashback
+/* =========================================
+   ROTA: VERIFICAR STATUS DO PAGAMENTO PIX
+   ========================================= */
 app.get('/check_payment_status/:id', async (req, res) => {
-  const paymentId = req.params.id;
+  const { id } = req.params;
 
   try {
-    // 1. Consulta o status na API do Mercado Pago
-    const payment = await mercadopago.payment.get(paymentId);
-    const status = payment.body.status;
+    const payment = new Payment(client);
+    const response = await payment.get({ id });
 
-    if (status === 'approved') {
-      const emailCliente = payment.body.payer.email;
-      const emailKey = sanitizeEmail(emailCliente);
-
-      // Busca o pedido salvo previamente no Firebase
-      const pedidosRef = db.ref('pedidos');
-      const snapshot = await pedidosRef.orderByChild('idPedidoMercadoPago').equalTo(Number(paymentId)).once('value');
-
-      if (snapshot.exists()) {
-        const pedidoKey = Object.keys(snapshot.val())[0];
-        const pedido = snapshot.val()[pedidoKey];
-
-        // Processa o cashback apenas se ainda não tiver sido processado
-        if (!pedido.cashbackProcessado) {
-          // Calcula o cashback total dos itens do pedido
-          const totalCashback = pedido.itens.reduce((acc, item) => {
-            return acc + ((item.cashback || 0) * item.qtd);
-          }, 0);
-
-          if (totalCashback > 0) {
-            // Atualiza saldo do usuário
-            const userRef = db.ref(`usuarios/${emailKey}`);
-            await userRef.update({
-              email: emailCliente,
-              saldo: admin.database.ServerValue.increment(totalCashback)
-            });
-
-            // Registra a transação no histórico
-            const transacoesRef = db.ref('transacoes');
-            await transacoesRef.push({
-              emailDestino: emailCliente.toLowerCase(),
-              valor: totalCashback,
-              tipo: 'cashback',
-              descricao: `Cashback referente ao pedido #${paymentId}`,
-              data: new Date().toISOString()
-            });
-          }
-
-          // Marca o pedido como concluído e cashback processado
-          await pedidosRef.child(pedidoKey).update({
-            status: 'approved',
-            cashbackProcessado: true
-          });
-        }
-      }
-    }
-
-    res.json({ status });
+    return res.status(200).json({
+      id: response.id,
+      status: response.status,
+      status_detail: response.status_detail
+    });
   } catch (error) {
-    console.error("Erro ao verificar pagamento:", error);
-    res.status(500).json({ error: "Erro interno no servidor" });
+    console.error("Erro ao verificar status do pagamento:", error);
+    return res.status(500).json({
+      error: "Erro ao consultar status no Mercado Pago.",
+      details: error.message
+    });
   }
 });
 
-
-
-/* =========================================================
+/* =========================================
    INICIALIZAÇÃO DO SERVIDOR
-   ========================================================= */
+   ========================================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}. Aguardando pagamentos...`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
