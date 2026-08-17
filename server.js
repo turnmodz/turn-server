@@ -9,94 +9,125 @@ if (!fetch) {
   fetch = require('node-fetch');
 }
 
+// 1. Importação segura dos submódulos do Firebase Admin
+const { initializeApp, getApps, cert } = require("firebase-admin/app");
+const { getDatabase } = require("firebase-admin/database");
+
 const app = express();
 
-// Configuração do CORS
 app.use(cors());
 app.use(express.json());
-
-// SERVIR ARQUIVOS ESTÁTICOS (HTML, JS, IMAGENS DO PROJETO)
 app.use(express.static(__dirname));
 
 // CONFIGURAÇÃO DO MERCADO PAGO E FIREBASE
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
-const FIREBASE_RTDB_URL = 'https://turnmodz-app-default-rtdb.firebaseio.com';
-
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 
-/* =========================================================
-   ROTAS DE PÁGINAS DO FRONTEND
-   ========================================================= */
-app.get('/pedidos', (req, res) => {
-  res.sendFile(path.join(__dirname, 'pedidos.html'));
-});
+// 2. Inicialização do Firebase Admin SDK
+try {
+  const serviceAccount = require("./firebase-key.json");
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert(serviceAccount),
+      databaseURL: "https://turnmodz-app-default-rtdb.firebaseio.com"
+    });
+  }
+} catch (e) {
+  console.warn("[FIREBASE ADMIN WARN] Chave local firebase-key.json não encontrada ou inválida.");
+}
+
+const db = getDatabase();
+
+function sanitizeEmail(email) {
+  return email ? email.toLowerCase().replace(/\./g, '_') : '';
+}
 
 /* =========================================================
-   FUNÇÃO AUXILIAR: SALVAR PEDIDO NO FIREBASE
+   FUNÇÃO AUXILIAR: SALVAR PEDIDO APENAS SE NÃO EXISTIR
    ========================================================= */
-async function saveApprovedOrderToFirebase(paymentData, cartItems) {
+async function processApprovedOrder(paymentData) {
+  const paymentId = paymentData.id;
+  const pedidosRef = db.ref('pedidos');
+
+  // Verifica se o pedido já foi gravado
+  const snapshot = await pedidosRef.orderByChild('idPedidoMercadoPago').equalTo(Number(paymentId)).once('value');
+
+  if (snapshot.exists()) {
+    console.log(`[FIREBASE] Pedido #${paymentId} já foi processado anteriormente.`);
+    return;
+  }
+
   const customerEmail = paymentData.metadata?.customer_email || paymentData.payer?.email || "cliente@email.com";
-  
+  const cartItems = paymentData.metadata?.cart || [];
+
   const orderData = {
     id: `TM-${Math.floor(1000 + Math.random() * 9000)}`,
+    idPedidoMercadoPago: Number(paymentId),
     date: new Date().toLocaleDateString('pt-BR'),
     status: 'approved',
     statusText: 'Pagamento Aprovado',
     customerEmail: customerEmail.trim().toLowerCase(),
     paymentMethod: 'PIX',
     total: paymentData.transaction_amount || 0,
-    items: cartItems || []
+    items: cartItems,
+    cashbackProcessado: true
   };
 
-  try {
-    const firebaseUrl = FIREBASE_RTDB_URL.endsWith('/') 
-      ? `${FIREBASE_RTDB_URL}pedidos.json` 
-      : `${FIREBASE_RTDB_URL}/pedidos.json`;
+  // Salva o pedido de forma única
+  await pedidosRef.push(orderData);
+  console.log(`[FIREBASE] Novo pedido #${paymentId} salvo com sucesso!`);
 
-    const response = await fetch(firebaseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(orderData)
+  // Processamento de cashback (se houver itens)
+  const totalCashback = cartItems.reduce((acc, item) => acc + ((item.cashback || 0) * (item.qtd || 1)), 0);
+
+  if (totalCashback > 0) {
+    const emailKey = sanitizeEmail(customerEmail);
+    const userRef = db.ref(`usuarios/${emailKey}`);
+    
+    // Atualiza saldo via increment
+    const { ServerValue } = require("firebase-admin/database");
+    await userRef.update({
+      email: customerEmail,
+      saldo: ServerValue.increment(totalCashback)
     });
 
-    if (response.ok) {
-      console.log(`[FIREBASE] Pedido salvo com sucesso para o e-mail: ${orderData.customerEmail}`);
-    } else {
-      console.error("[FIREBASE ERRO]", await response.text());
-    }
-  } catch (error) {
-    console.error("[FIREBASE FALHA DE CONEXÃO]", error);
+    const transacoesRef = db.ref('transacoes');
+    await transacoesRef.push({
+      emailDestino: customerEmail.toLowerCase(),
+      valor: totalCashback,
+      tipo: 'cashback',
+      descricao: `Cashback referente ao pedido #${paymentId}`,
+      data: new Date().toISOString()
+    });
   }
 }
 
 /* =========================================================
-   1. ROTA DE CRIAÇÃO DO PAGAMENTO PIX
+   ROTAS
    ========================================================= */
+app.get('/pedidos', (req, res) => {
+  res.sendFile(path.join(__dirname, 'pedidos.html'));
+});
+
+// 1. CRIAÇÃO DO PAGAMENTO PIX
 app.post('/create_pix_payment', async (req, res) => {
   try {
     const { cart, payer } = req.body;
-
-    if (!cart || cart.length === 0) {
-      return res.status(400).json({ error: 'Carrinho vazio' });
-    }
+    if (!cart || cart.length === 0) return res.status(400).json({ error: 'Carrinho vazio' });
 
     const totalAmount = cart.reduce((sum, item) => sum + (Number(item.preco) * Number(item.qtd)), 0);
-
     const customerEmail = payer && payer.email ? payer.email : "cliente@email.com";
     const nomeCompleto = (payer && payer.nome ? payer.nome.trim() : "Cliente TurnModz").split(" ");
-    const firstName = nomeCompleto[0];
-    const lastName = nomeCompleto.length > 1 ? nomeCompleto.slice(1).join(" ") : "Sobrenome";
 
     const payment = new Payment(client);
-    
     const body = {
       transaction_amount: Number(totalAmount.toFixed(2)),
       description: "Compra na Loja TurnModz",
       payment_method_id: 'pix',
       payer: {
         email: customerEmail,
-        first_name: firstName,
-        last_name: lastName,
+        first_name: nomeCompleto[0],
+        last_name: nomeCompleto.length > 1 ? nomeCompleto.slice(1).join(" ") : "Sobrenome",
         identification: {
           type: 'CPF',
           number: payer && payer.cpf ? payer.cpf.replace(/\D/g, '') : ''
@@ -116,20 +147,62 @@ app.post('/create_pix_payment', async (req, res) => {
       qr_code_base64: response.point_of_interaction.transaction_data.qr_code_base64,
       ticket_url: response.point_of_interaction.transaction_data.ticket_url
     });
-
   } catch (error) {
     console.error("Erro ao gerar Pix:", error);
     res.status(500).json({ error: 'Erro ao gerar pagamento via Pix' });
   }
 });
 
-/* =========================================================
-   ROTA PARA SOLICITAÇÃO DE SAQUE (REGISTRO NO FIREBASE)
-   ========================================================= */
+// 2. CHECAGEM DE STATUS (Retorna APENAS os status do pagamento)
+app.get('/check_payment_status/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payment = new Payment(client);
+    const paymentData = await payment.get({ id });
+
+    // Se aprovado, processa no Firebase garantindo que não haverá duplicatas
+    if (paymentData.status === 'approved') {
+      await processApprovedOrder(paymentData);
+    }
+
+    // Retorna EXCLUSIVAMENTE o status para a chamada frontend
+    res.json({
+      status: paymentData.status,
+      status_detail: paymentData.status_detail
+    });
+  } catch (error) {
+    console.error("Erro ao verificar status do pagamento:", error);
+    res.status(500).json({ error: 'Erro ao verificar pagamento' });
+  }
+});
+
+// 3. WEBHOOK MERCADO PAGO
+app.post('/webhook', async (req, res) => {
+  try {
+    const { type, data } = req.body;
+
+    if (type === 'payment' || req.query.type === 'payment') {
+      const paymentId = data?.id || req.query['data.id'];
+      if (paymentId) {
+        const payment = new Payment(client);
+        const paymentData = await payment.get({ id: paymentId });
+
+        if (paymentData.status === 'approved') {
+          await processApprovedOrder(paymentData);
+        }
+      }
+    }
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Erro ao processar Webhook:", error);
+    res.sendStatus(500);
+  }
+});
+
+// 4. SOLICITAÇÃO DE SAQUE
 app.post('/send_pix_payout', async (req, res) => {
   try {
     const { pixKey, amount, description } = req.body;
-
     if (!pixKey || !amount || Number(amount) <= 0) {
       return res.status(400).json({ error: 'Chave PIX e valor válido são obrigatórios.' });
     }
@@ -143,139 +216,15 @@ app.post('/send_pix_payout', async (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    const firebaseUrl = FIREBASE_RTDB_URL.endsWith('/') 
-      ? `${FIREBASE_RTDB_URL}saques.json` 
-      : `${FIREBASE_RTDB_URL}/saques.json`;
-
-    const firebaseResponse = await fetch(firebaseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payoutRequest)
-    });
-
-    if (firebaseResponse.ok) {
-      console.log(`[SAQUE REGISTRADO] R$ ${amount} para chave ${pixKey}`);
-      return res.json({ 
-        success: true, 
-        message: "Solicitação enviada! Seu resgate será processado em breve." 
-      });
-    } else {
-      const errText = await firebaseResponse.text();
-      console.error("[ERRO FIREBASE SAQUES]", errText);
-      return res.status(500).json({ error: 'Erro ao salvar no banco de dados. Verifique a URL do Firebase.' });
-    }
-
+    await db.ref('saques').push(payoutRequest);
+    return res.json({ success: true, message: "Solicitação enviada com sucesso!" });
   } catch (error) {
-    console.error("Erro interno no servidor ao processar saque:", error);
-    return res.status(500).json({ error: error.message || 'Erro interno ao registrar solicitação de saque.' });
+    console.error("Erro ao registrar saque:", error);
+    return res.status(500).json({ error: 'Erro interno ao registrar solicitação de saque.' });
   }
 });
 
-/* =========================================================
-   2. ROTA DE CHECAGEM DO STATUS DO PAGAMENTO (POLLING)
-   ========================================================= */
-app.get('/check_payment_status/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const payment = new Payment(client);
-    const paymentData = await payment.get({ id });
-
-    if (paymentData.status === 'approved') {
-      const cartItems = paymentData.metadata?.cart || [];
-      await saveApprovedOrderToFirebase(paymentData, cartItems);
-    }
-
-    res.json({
-      status: paymentData.status,
-      status_detail: paymentData.status_detail
-    });
-  } catch (error) {
-    console.error("Erro ao verificar status do pagamento:", error);
-    res.status(500).json({ error: 'Erro ao verificar pagamento' });
-  }
-});
-
-/* =========================================================
-   3. WEBHOOK MERCADO PAGO (NOTIFICAÇÕES AUTOMÁTICAS)
-   ========================================================= */
-app.post('/webhook', async (req, res) => {
-  try {
-    const { type, data } = req.body;
-
-    if (type === 'payment' || req.query.type === 'payment') {
-      const paymentId = data?.id || req.query['data.id'];
-      if (paymentId) {
-        const payment = new Payment(client);
-        const paymentData = await payment.get({ id: paymentId });
-
-        if (paymentData.status === 'approved') {
-          console.log(`[WEBHOOK] Pagamento #${paymentId} aprovado com sucesso!`);
-          const cartItems = paymentData.metadata?.cart || [];
-          await saveApprovedOrderToFirebase(paymentData, cartItems);
-        }
-      }
-    }
-
-    res.sendStatus(200);
-  } catch (error) {
-    console.error("Erro ao processar Webhook:", error);
-    res.sendStatus(500);
-  }
-});
-
-
-// 1. Importação segura dos submódulos do Firebase Admin
-const { initializeApp, getApps, cert } = require("firebase-admin/app");
-const { getDatabase } = require("firebase-admin/database");
-
-// 2. Chave do seu Firebase Realtime Database
-const serviceAccount = require("./firebase-key.json");
-
-// 3. Inicialização limpa (Verifica se já existe uma app inicializada)
-if (getApps().length === 0) {
-  initializeApp({
-    credential: cert(serviceAccount),
-    databaseURL: "https://turnmodz-app-default-rtdb.firebaseio.com" // Confirme se esta é a URL exata do seu banco
-  });
-}
-
-// 4. Instância do Realtime Database pronta para uso
-const db = getDatabase();
-
-// Função auxiliar para formatar e-mail (chave do Firebase)
-function sanitizeEmail(email) {
-  return email.toLowerCase().replace(/\./g, '_');
-}
-
-// Rota de checagem que valida o pagamento e envia o cashback
-/* =========================================
-   ROTA: VERIFICAR STATUS DO PAGAMENTO PIX
-   ========================================= */
-app.get('/check_payment_status/:id', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const payment = new Payment(client);
-    const response = await payment.get({ id });
-
-    return res.status(200).json({
-      id: response.id,
-      status: response.status,
-      status_detail: response.status_detail
-    });
-  } catch (error) {
-    console.error("Erro ao verificar status do pagamento:", error);
-    return res.status(500).json({
-      error: "Erro ao consultar status no Mercado Pago.",
-      details: error.message
-    });
-  }
-});
-
-/* =========================================
-   INICIALIZAÇÃO DO SERVIDOR
-   ========================================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}. Aguardando pagamentos...`);
 });
