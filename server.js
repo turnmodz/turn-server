@@ -28,7 +28,7 @@ const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 const payment = new Payment(client);
 
 /* =========================================================
-   INICIALIZAÇÃO DO FIREBASE ADMIN (LOCALHOST / PRODUCTION)
+   INICIALIZAÇÃO DO FIREBASE ADMIN (COMPATÍVEL COM SERVERLESS)
    ========================================================= */
 let db = null;
 
@@ -54,6 +54,10 @@ try {
       databaseURL: "https://turnmodz-app-default-rtdb.firebaseio.com"
     });
     db = getDatabase();
+    // Força o Firebase a rodar de forma não-bloqueante em Serverless
+    if (db && db.engine && db.engine.repo_) {
+      db.engine.repo_.start();
+    }
     console.log("[FIREBASE] Inicializado com sucesso.");
   } else if (getApps().length > 0) {
     db = getDatabase();
@@ -192,7 +196,7 @@ app.post('/create_pix_payment', async (req, res) => {
 });
 
 /* =========================================================
-   VERIFICAR STATUS DO PAGAMENTO
+   VERIFICAR STATUS DO PAGAMENTO (ASYNC EM BACKGROUND)
    ========================================================= */
 app.get('/check_payment_status/:id', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -205,8 +209,11 @@ app.get('/check_payment_status/:id', async (req, res) => {
 
     const paymentData = await payment.get({ id: String(id) });
 
+    // Dispara a gravação no Firebase sem aguardar o await (evita Timeout de 10s da Vercel)
     if (paymentData.status === 'approved') {
-      await processApprovedOrder(paymentData);
+      processApprovedOrder(paymentData).catch(err => 
+        console.error("Erro em background no Firebase:", err)
+      );
     }
 
     return res.json({
@@ -232,7 +239,9 @@ app.post('/webhook', async (req, res) => {
         const paymentData = await payment.get({ id: String(paymentId) });
 
         if (paymentData.status === 'approved') {
-          await processApprovedOrder(paymentData);
+          processApprovedOrder(paymentData).catch(err => 
+            console.error("Erro Webhook Firebase:", err)
+          );
         }
       }
     }
