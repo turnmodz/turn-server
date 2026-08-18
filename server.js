@@ -171,22 +171,35 @@ app.post('/create_pix_payment', async (req, res) => {
 });
 
 app.get('/check_payment_status/:id', async (req, res) => {
+  // Garante cabeçalhos CORS manualmente em caso de erro no fluxo
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   try {
     const { id } = req.params;
-    const payment = new Payment(client);
-    const paymentData = await payment.get({ id });
 
-    if (paymentData.status === 'approved') {
-      await processApprovedOrder(paymentData);
+    if (!id || id === "undefined" || id === "null") {
+      return res.status(400).json({ error: "ID de pagamento inválido." });
     }
 
-    res.json({
+    // Busca o pagamento no Mercado Pago usando a SDK v2
+    const paymentData = await payment.get({ id: String(id) });
+
+    if (!paymentData) {
+      return res.status(404).json({ error: "Pagamento não encontrado." });
+    }
+
+    return res.json({
       status: paymentData.status,
       status_detail: paymentData.status_detail
     });
   } catch (error) {
-    console.error("Erro ao verificar status do pagamento:", error);
-    res.status(500).json({ error: 'Erro ao verificar pagamento' });
+    console.error("Erro ao checar status do pagamento:", error?.message || error);
+    return res.status(500).json({ 
+      error: "Erro ao consultar Mercado Pago", 
+      details: error?.message || String(error) 
+    });
   }
 });
 
