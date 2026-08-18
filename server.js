@@ -275,7 +275,13 @@ app.post('/send_pix_payout', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}. Aguardando pagamentos...`);
-});
+// Exporte o app para a Vercel usar como Serverless Function
+module.exports = app;
+
+// Só roda o app.listen se estiver rodando localmente
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+  });
+}
