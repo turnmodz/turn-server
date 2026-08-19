@@ -23,7 +23,14 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static(__dirname));
 
-const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
+// Remove o token antigo hardcoded e força a leitura da variável de ambiente da Vercel
+const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+
+if (!MP_ACCESS_TOKEN) {
+  console.error("[ERRO CRÍTICO] Variável MP_ACCESS_TOKEN não configurada na Vercel!");
+}
+
+const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
 const payment = new Payment(client);
 
