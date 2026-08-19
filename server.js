@@ -169,6 +169,9 @@ app.get('/pedidos', (req, res) => {
 /* =========================================================
    GERAR PAGAMENTO VIA PIX
    ========================================================= */
+/* =========================================================
+   GERAR PAGAMENTO VIA PIX (ATUALIZADO)
+   ========================================================= */
 app.post('/create_pix_payment', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -179,24 +182,28 @@ app.post('/create_pix_payment', async (req, res) => {
     if (!cart || cart.length === 0) return res.status(400).json({ error: 'Carrinho vazio' });
 
     const totalAmount = cart.reduce((sum, item) => sum + (Number(item.preco) * Number(item.qtd)), 0);
-    const customerEmail = payer && payer.email ? payer.email : "cliente@email.com";
+    
+    // Tratamento de e-mail e nome com fallback
+    const customerEmail = payer && payer.email && payer.email.includes('@') 
+      ? payer.email.trim() 
+      : "cliente@email.com";
+      
     const nomeCompleto = (payer && payer.nome ? payer.nome.trim() : "Cliente TurnModz").split(" ");
 
-    // Tratamento e limpeza do CPF
-    const cleanCpf = payer && payer.cpf ? String(payer.cpf).replace(/\D/g, '') : '';
-
-    // Estrutura do payer com fallback de segurança
+    // Objeto payer mínimo exigido pelo Pix
     const payerData = {
-      email: customerEmail || "cliente@email.com",
-      first_name: (nomeCompleto && nomeCompleto[0]) ? nomeCompleto[0] : "Cliente",
-      last_name: (nomeCompleto && nomeCompleto.length > 1) ? nomeCompleto.slice(1).join(" ") : "Consumidor"
+      email: customerEmail,
+      first_name: nomeCompleto[0] || "Cliente",
+      last_name: nomeCompleto.length > 1 ? nomeCompleto.slice(1).join(" ") : "Consumidor"
     };
 
-    // O Mercado Pago SÓ deve receber identification se houver um CPF válido de 11 dígitos
+    // Caso o seu frontend futuramente passe um CPF válido de 11 dígitos, ele é anexado.
+    // Se não passar, o Mercado Pago aceitará a transação sem a chave identification.
+    const cleanCpf = payer && payer.cpf ? String(payer.cpf).replace(/\D/g, '') : '';
     if (cleanCpf && cleanCpf.length === 11) {
       payerData.identification = {
         type: 'CPF',
-        number: 45003690070
+        number: cleanCpf
       };
     }
 
@@ -207,7 +214,7 @@ app.post('/create_pix_payment', async (req, res) => {
       payer: payerData,
       metadata: {
         cart: cart || [],
-        customer_email: customerEmail || "",
+        customer_email: customerEmail,
         user_id: userId || null
       }
     };
@@ -222,7 +229,10 @@ app.post('/create_pix_payment', async (req, res) => {
     });
   } catch (error) {
     console.error("Erro ao gerar Pix:", error?.message || error);
-    return res.status(500).json({ error: 'Erro ao gerar pagamento via Pix', details: error?.message });
+    return res.status(500).json({ 
+      error: 'Erro ao gerar pagamento via Pix', 
+      details: error?.message || error 
+    });
   }
 });
 
