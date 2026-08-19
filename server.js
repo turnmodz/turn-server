@@ -161,22 +161,32 @@ app.post('/create_pix_payment', async (req, res) => {
     const customerEmail = payer && payer.email ? payer.email : "cliente@email.com";
     const nomeCompleto = (payer && payer.nome ? payer.nome.trim() : "Cliente TurnModz").split(" ");
 
+// Tratamento e limpeza do CPF
+    const cleanCpf = payer && payer.cpf ? String(payer.cpf).replace(/\D/g, '') : '';
+
+    // Estrutura do payer com fallback de segurança
+    const payerData = {
+      email: customerEmail || "cliente@email.com",
+      first_name: (nomeCompleto && nomeCompleto[0]) ? nomeCompleto[0] : "Cliente",
+      last_name: (nomeCompleto && nomeCompleto.length > 1) ? nomeCompleto.slice(1).join(" ") : "Consumidor"
+    };
+
+    // O Mercado Pago SÓ deve receber identification se houver um CPF válido de 11 dígitos
+    if (cleanCpf && cleanCpf.length === 11) {
+      payerData.identification = {
+        type: 'CPF',
+        number: cleanCpf
+      };
+    }
+
     const body = {
       transaction_amount: Number(totalAmount.toFixed(2)),
       description: "Compra na Loja TurnModz",
       payment_method_id: 'pix',
-      payer: {
-        email: customerEmail,
-        first_name: nomeCompleto[0],
-        last_name: nomeCompleto.length > 1 ? nomeCompleto.slice(1).join(" ") : "Sobrenome",
-        identification: {
-          type: 'CPF',
-          number: payer && payer.cpf ? payer.cpf.replace(/\D/g, '') : ''
-        }
-      },
+      payer: payerData,
       metadata: {
-        cart: cart,
-        customer_email: customerEmail,
+        cart: cart || [],
+        customer_email: customerEmail || "",
         user_id: userId || null
       }
     };
