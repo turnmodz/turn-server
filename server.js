@@ -13,16 +13,21 @@ const { getDatabase } = require("firebase-admin/database");
 
 const app = express();
 
-// Configuração robusta do CORS
+// Middleware CORS global
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true
+  credentials: false
 }));
 
-// 2. Responde imediatamente requisições OPTIONS (Preflight)
-app.options('*', cors());
+// Trata requisições Preflight (OPTIONS) explicitamente
+app.options('*', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  return res.sendStatus(204);
+});
 
 app.use(express.json());
 
