@@ -16,12 +16,15 @@ const app = express();
 // Configuração robusta do CORS
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true
 }));
 
+// 2. Responde imediatamente requisições OPTIONS (Preflight)
+app.options('*', cors());
+
 app.use(express.json());
-app.use(express.static(__dirname));
 
 // Remove o token antigo hardcoded e força a leitura da variável de ambiente da Vercel
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
