@@ -168,9 +168,14 @@ app.get('/pedidos', (req, res) => {
    ========================================================= */
 app.post('/create_pix_payment', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   try {
     const { cart, payer, userId } = req.body;
     if (!cart || cart.length === 0) return res.status(400).json({ error: 'Carrinho vazio' });
+
+    // Restante do seu código do Pix...
 
     const totalAmount = cart.reduce((sum, item) => sum + (Number(item.preco) * Number(item.qtd)), 0);
     const customerEmail = payer && payer.email ? payer.email : "cliente@email.com";
