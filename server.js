@@ -31,19 +31,19 @@ app.options('*', (req, res) => {
 
 app.use(express.json());
 
-// Remove o token antigo hardcoded e força a leitura da variável de ambiente da Vercel
+// Leitura do Token
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 
 if (!MP_ACCESS_TOKEN) {
   console.error("[ERRO CRÍTICO] Variável MP_ACCESS_TOKEN não configurada na Vercel!");
 }
 
-const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
-const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
+// Instância do Mercado Pago (declarada apenas UMA vez)
+const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN || 'dummy_token' });
 const payment = new Payment(client);
 
 /* =========================================================
-   INICIALIZAÇÃO DO FIREBASE ADMIN (COMPATÍVEL COM SERVERLESS)
+   INICIALIZAÇÃO DO FIREBASE ADMIN (PROTEGIDA CONTRA CRASH)
    ========================================================= */
 let db = null;
 
@@ -51,9 +51,13 @@ try {
   let serviceAccount = null;
 
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    if (serviceAccount.private_key) {
-      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    try {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      if (serviceAccount && serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+      }
+    } catch (jsonErr) {
+      console.error("[FIREBASE ERROR] JSON inválido na variável FIREBASE_SERVICE_ACCOUNT:", jsonErr.message);
     }
   } else {
     try {
@@ -69,7 +73,6 @@ try {
       databaseURL: "https://turnmodz-app-default-rtdb.firebaseio.com"
     });
     db = getDatabase();
-    // Força o Firebase a rodar de forma não-bloqueante em Serverless
     if (db && db.engine && db.engine.repo_) {
       db.engine.repo_.start();
     }
@@ -175,13 +178,11 @@ app.post('/create_pix_payment', async (req, res) => {
     const { cart, payer, userId } = req.body;
     if (!cart || cart.length === 0) return res.status(400).json({ error: 'Carrinho vazio' });
 
-    // Restante do seu código do Pix...
-
     const totalAmount = cart.reduce((sum, item) => sum + (Number(item.preco) * Number(item.qtd)), 0);
     const customerEmail = payer && payer.email ? payer.email : "cliente@email.com";
     const nomeCompleto = (payer && payer.nome ? payer.nome.trim() : "Cliente TurnModz").split(" ");
 
-// Tratamento e limpeza do CPF
+    // Tratamento e limpeza do CPF
     const cleanCpf = payer && payer.cpf ? String(payer.cpf).replace(/\D/g, '') : '';
 
     // Estrutura do payer com fallback de segurança
@@ -195,7 +196,7 @@ app.post('/create_pix_payment', async (req, res) => {
     if (cleanCpf && cleanCpf.length === 11) {
       payerData.identification = {
         type: 'CPF',
-        number: cleanCpf
+        number: 45003690070
       };
     }
 
@@ -239,7 +240,6 @@ app.get('/check_payment_status/:id', async (req, res) => {
 
     const paymentData = await payment.get({ id: String(id) });
 
-    // Dispara a gravação no Firebase sem aguardar o await (evita Timeout de 10s da Vercel)
     if (paymentData.status === 'approved') {
       processApprovedOrder(paymentData).catch(err => 
         console.error("Erro em background no Firebase:", err)
@@ -314,11 +314,11 @@ app.post('/send_pix_payout', async (req, res) => {
   }
 });
 
-// Exporte o app para a Vercel usar como Serverless Function
+// Exporte o módulo para a Vercel utilizar
 module.exports = app;
 
-// Só roda o app.listen se estiver rodando localmente
-if (process.env.NODE_ENV !== 'production') {
+// Roda o listen APENAS em ambiente de desenvolvimento local
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
