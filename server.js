@@ -49,49 +49,65 @@ function sanitizeEmail(email) {
 /* =========================================================
    FUNÇÃO AUXILIAR: SALVAR PEDIDO
    ========================================================= */
+/* =========================================================
+   FUNÇÃO AUXILIAR: SALVAR PEDIDO (USANDO ID DO PAGAMENTO)
+   ========================================================= */
 async function saveApprovedOrderToFirebase(paymentData, cartItems) {
+  const paymentId = String(paymentData.id); // ID real do Mercado Pago (ex: 175757128452)
   const customerEmail = (paymentData.metadata && paymentData.metadata.customer_email) || 
                         (paymentData.payer && paymentData.payer.email) || 
                         'cliente@email.com';
-  const paymentId = paymentData.id;
-
-  const orderData = {
-    id: `TM-${Math.floor(1000 + Math.random() * 9000)}`,
-    idPedidoMercadoPago: paymentId,
-    date: new Date().toLocaleDateString('pt-BR'),
-    status: 'approved',
-    statusText: 'Pagamento Aprovado',
-    customerEmail: customerEmail.trim().toLowerCase(),
-    paymentMethod: 'PIX',
-    total: paymentData.transaction_amount || 0,
-    items: cartItems || [],
-    cashbackProcessado: false
-  };
 
   try {
-    const firebaseUrl = `${FIREBASE_RTDB_URL}/pedidos.json`;
-
-    const response = await fetch(firebaseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(orderData)
-    });
-
     const db = getDbInstance();
-    if (response.ok && db) {
-      const emailKey = sanitizeEmail(customerEmail);
-      const totalCashback = cartItems.reduce((acc, item) => {
-        return acc + ((Number(item.cashback) || 0) * (Number(item.qtd) || 1));
-      }, 0);
+    if (!db) return;
 
-      if (totalCashback > 0) {
-        const userRef = db.ref(`usuarios/${emailKey}`);
-        await userRef.update({
-          email: customerEmail.toLowerCase(),
-          saldo: ServerValue.increment(totalCashback)
-        });
-      }
+    const orderRef = db.ref(`pedidos/${paymentId}`);
+
+    // 1. Verifica se o pedido já existe no Firebase
+    const snapshot = await orderRef.once('value');
+    const existingOrder = snapshot.val();
+
+    // Se o pedido já existir e o cashback já foi processado, ignora
+    if (existingOrder && existingOrder.cashbackProcessado) {
+      console.log(`[FIREBASE] O pedido #${paymentId} já foi registrado e processado. Ignorando...`);
+      return;
     }
+
+    const totalCashback = cartItems.reduce((acc, item) => {
+      return acc + ((Number(item.cashback) || 0) * (Number(item.qtd) || 1));
+    }, 0);
+
+    // 2. Monta os dados do pedido usando o ID real do pagamento
+    const orderData = {
+      id: paymentId, // Usando o ID real do Mercado Pago no lugar de "TM-XXXX"
+      idPedidoMercadoPago: paymentId,
+      date: new Date().toLocaleDateString('pt-BR'),
+      status: 'approved',
+      statusText: 'Pagamento Aprovado',
+      customerEmail: customerEmail.trim().toLowerCase(),
+      paymentMethod: 'PIX',
+      total: paymentData.transaction_amount || 0,
+      items: cartItems || [],
+      cashbackProcessado: true
+    };
+
+    // 3. Salva ou atualiza diretamente no caminho /pedidos/{paymentId}
+    await orderRef.set(orderData);
+
+    // 4. Incrementa o cashback apenas se ainda não tinha sido processado
+    if (!existingOrder && totalCashback > 0) {
+      const emailKey = sanitizeEmail(customerEmail);
+      const userRef = db.ref(`usuarios/${emailKey}`);
+      
+      await userRef.update({
+        email: customerEmail.toLowerCase(),
+        saldo: ServerValue.increment(totalCashback)
+      });
+
+      console.log(`[CASHBACK] R$ ${totalCashback} creditados para ${customerEmail}`);
+    }
+
   } catch (error) {
     console.error('[FIREBASE FALHA]', error.message);
   }
