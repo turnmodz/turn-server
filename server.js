@@ -15,7 +15,8 @@ app.use(cors({
   credentials: true
 }));
 
-app.options('*', cors());
+// Substitua o app.options('*', cors()) por:
+app.options(/(.*)/, cors());
 app.use(express.json());
 
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
@@ -99,25 +100,35 @@ async function saveApprovedOrderToFirebase(paymentData, cartItems) {
 /* =========================================================
    ROTAS
    ========================================================= */
+/* =========================================================
+   ROTA DE CHECAGEM DE STATUS OTIMIZADA (SEM TIMEOUT)
+   ========================================================= */
 app.get('/check_payment_status/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
     if (!id || id === 'undefined' || id === 'null') {
       return res.status(400).json({ error: 'ID de pagamento inválido.' });
     }
 
     const payment = new Payment(client);
+    // Busca status no Mercado Pago
     const paymentData = await payment.get({ id });
 
+    // Se estiver aprovado, dispara o salvamento no Firebase em SEGUNDO PLANO (sem dar await na resposta da API)
     if (paymentData.status === 'approved') {
       const cartItems = paymentData.metadata?.cart || [];
-      await saveApprovedOrderToFirebase(paymentData, cartItems);
+      saveApprovedOrderToFirebase(paymentData, cartItems).catch(err => 
+        console.error('[ERRO SEGUNDO PLANO FIREBASE]', err.message)
+      );
     }
 
+    // Retorna a resposta imediatamente para o navegador evitar Timeout 504
     return res.json({
       status: paymentData.status,
       status_detail: paymentData.status_detail
     });
+
   } catch (error) {
     console.error('Erro ao verificar status do pagamento:', error.message || error);
     return res.status(500).json({ 
