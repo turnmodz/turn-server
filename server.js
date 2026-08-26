@@ -1,28 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const { MercadoPagoConfig, Payment } = require('mercadopago');
-const path = require('path');
 
-// Importação segura do Firebase Admin
+// Importações do Firebase Admin
 const { initializeApp, getApps, cert } = require('firebase-admin/app');
 const { getDatabase, ServerValue } = require('firebase-admin/database');
 
-// Inicialização resiliente do Firebase
-if (getApps().length === 0) {
-  try {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      initializeApp({
-        credential: cert(serviceAccount),
-        databaseURL: 'https://turnmodz-app-default-rtdb.firebaseio.com'
-      });
-    }
-  } catch (err) {
-    console.error('[FIREBASE INIT ERROR]', err.message);
-  }
-}
-
-const db = getApps().length > 0 ? getDatabase() : null;
 const app = express();
 
 app.use(cors({
@@ -35,11 +18,28 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json());
 
-// CONFIGURAÇÃO DO MERCADO PAGO
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'APP_USR-3652144727697622-021610-2239fd16cdc3a00a0c23481f270cbf5b-2305736607';
 const FIREBASE_RTDB_URL = 'https://turnmodz-app-default-rtdb.firebaseio.com';
 
 const client = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
+
+// Função para obter a instância do Firebase sob demanda (Evita travar o Build)
+function getDbInstance() {
+  if (getApps().length === 0) {
+    try {
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        initializeApp({
+          credential: cert(serviceAccount),
+          databaseURL: FIREBASE_RTDB_URL
+        });
+      }
+    } catch (err) {
+      console.error('[FIREBASE INIT ERROR]', err.message);
+    }
+  }
+  return getApps().length > 0 ? getDatabase() : null;
+}
 
 function sanitizeEmail(email) {
   return email.toLowerCase().replace(/\./g, '_');
@@ -68,9 +68,7 @@ async function saveApprovedOrderToFirebase(paymentData, cartItems) {
   };
 
   try {
-    const firebaseUrl = FIREBASE_RTDB_URL.endsWith('/')
-      ? `${FIREBASE_RTDB_URL}pedidos.json`
-      : `${FIREBASE_RTDB_URL}/pedidos.json`;
+    const firebaseUrl = `${FIREBASE_RTDB_URL}/pedidos.json`;
 
     const response = await fetch(firebaseUrl, {
       method: 'POST',
@@ -78,6 +76,7 @@ async function saveApprovedOrderToFirebase(paymentData, cartItems) {
       body: JSON.stringify(orderData)
     });
 
+    const db = getDbInstance();
     if (response.ok && db) {
       const emailKey = sanitizeEmail(customerEmail);
       const totalCashback = cartItems.reduce((acc, item) => {
@@ -98,12 +97,11 @@ async function saveApprovedOrderToFirebase(paymentData, cartItems) {
 }
 
 /* =========================================================
-   1. ROTA DE CHECAGEM DO STATUS (CORRIGIDA)
+   ROTAS
    ========================================================= */
 app.get('/check_payment_status/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
     if (!id || id === 'undefined' || id === 'null') {
       return res.status(400).json({ error: 'ID de pagamento inválido.' });
     }
@@ -123,15 +121,12 @@ app.get('/check_payment_status/:id', async (req, res) => {
   } catch (error) {
     console.error('Erro ao verificar status do pagamento:', error.message || error);
     return res.status(500).json({ 
-      error: 'Erro ao verificar pagamentoo',
+      error: 'Erro ao verificar pagamento',
       details: error.message || 'Erro interno'
     });
   }
 });
 
-/* =========================================================
-   2. ROTA DE CRIAÇÃO DO PAGAMENTO PIX
-   ========================================================= */
 app.post('/create_pix_payment', async (req, res) => {
   try {
     const { cart, payer } = req.body;
@@ -189,7 +184,7 @@ app.post('/create_pix_payment', async (req, res) => {
 
 module.exports = app;
 
-if (require.main === module) {
+if (require.main === module && !process.env.VERCEL) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`Servidor rodando na port ${PORT}`));
+  app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
 }
