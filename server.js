@@ -123,7 +123,7 @@ app.get('/check_payment_status/:id', async (req, res) => {
   } catch (error) {
     console.error('Erro ao verificar status do pagamento:', error.message || error);
     return res.status(500).json({ 
-      error: 'Erro ao verificar pagamento',
+      error: 'Erro ao verificar pagamentoo',
       details: error.message || 'Erro interno'
     });
   }
