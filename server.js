@@ -154,12 +154,14 @@ app.get('/check_payment_status/:id', async (req, res) => {
   }
 });
 
-app.get('/baixar-perfil', (req, res) => {
+// Exemplo no seu arquivo do servidor Express (server.js / index.js)
+app.get('/download-perfil', (req, res) => {
+    const path = require('path');
     const filePath = path.join(__dirname, 'perfil.mobileconfig');
     
-    // Define o MIME type obrigatório para o iOS
+    // Header indispensável para o iOS reconhecer como perfil
     res.setHeader('Content-Type', 'application/x-apple-aspen-config');
-    res.setHeader('Content-Disposition', 'attachment; filename="perfil.mobileconfig"');
+    res.setHeader('Content-Disposition', 'attachment; filename="turnmodz.mobileconfig"');
     
     res.sendFile(filePath);
 });
