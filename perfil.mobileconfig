@@ -39,8 +39,8 @@
             <true/>
             <key>Precomposed</key>
             <true/>
-            <key>IconURL</key>
-            <string>https://turnmodz-app.web.app/turn.jpeg</string>
+            <key>Icon</key>
+            <data>iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==</data>
         </dict>
     </array>
 </dict>
