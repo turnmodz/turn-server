@@ -9,7 +9,7 @@
     <key>PayloadIdentifier</key>
     <string>com.turnmodz.app.config</string>
     <key>PayloadUUID</key>
-    <string>2f129a03-7a91-4c4c-81b4-2b63cb338b20</string>
+    <string>7A1B2C3D-4E5F-6789-0123-456789ABCDEF</string>
     <key>PayloadType</key>
     <string>Configuration</string>
     <key>PayloadVersion</key>
@@ -24,11 +24,11 @@
             <key>PayloadVersion</key>
             <integer>1</integer>
             <key>PayloadIdentifier</key>
-            <string>com.turnmodz.app.webclip</string>
+            <string>com.turnmodz.app.config.webclip1</string>
             <key>PayloadUUID</key>
-            <string>b3a4a754-8c01-4d1a-96e0-086e42b6a71e</string>
+            <string>12345678-ABCD-EF01-2345-6789ABCDEF01</string>
             <key>PayloadDisplayName</key>
-            <string>Web Clip TurnModz</string>
+            <string>Turn Financer</string>
             <key>URL</key>
             <string>https://turnmodz-app.web.app</string>
             <key>Label</key>
@@ -39,12 +39,6 @@
             <true/>
             <key>Precomposed</key>
             <true/>
-            <key>Icon</key>
-            <data>
-            iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAAXNSR0IArs4c6QAA
-            AARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAOSURBVFhH7cEx
-            AQAAAMKg9U9tDQ8gAAAAAAB8ACoAAAF5xOedAAAAAElFTkSuQmCC
-            </data>
         </dict>
     </array>
 </dict>
