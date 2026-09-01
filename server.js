@@ -154,6 +154,16 @@ app.get('/check_payment_status/:id', async (req, res) => {
   }
 });
 
+app.get('/baixar-perfil', (req, res) => {
+    const filePath = path.join(__dirname, 'perfil.mobileconfig');
+    
+    // Define o MIME type obrigatório para o iOS
+    res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+    res.setHeader('Content-Disposition', 'attachment; filename="perfil.mobileconfig"');
+    
+    res.sendFile(filePath);
+});
+
 app.post('/create_pix_payment', async (req, res) => {
   try {
     const { cart, payer } = req.body;
