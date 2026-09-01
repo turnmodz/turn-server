@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadDisplayName</key>
+    <string>TurnModz App</string>
+    <key>PayloadDescription</key>
+    <string>Instala o aplicativo web e atalho do TurnModz no seu iOS.</string>
+    <key>PayloadIdentifier</key>
+    <string>com.turnmodz.app.config</string>
+    <key>PayloadUUID</key>
+    <string>2f129a03-7a91-4c4c-81b4-2b63cb338b20</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadOrganization</key>
+    <string>TurnModz</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.webClip.managed</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.turnmodz.app.webclip</string>
+            <key>PayloadUUID</key>
+            <string>b3a4a754-8c01-4d1a-96e0-086e42b6a71e</string>
+            <key>PayloadDisplayName</key>
+            <string>Web Clip TurnModz</string>
+            <key>URL</key>
+            <string>https://turn-server-brown.vercel.app</string>
+            <key>Label</key>
+            <string>TurnModz</string>
+            <key>IsRemovable</key>
+            <true/>
+            <key>FullScreen</key>
+            <true/>
+        </dict>
+    </array>
+</dict>
+</plist>
