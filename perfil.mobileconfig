@@ -30,7 +30,7 @@
             <key>PayloadDisplayName</key>
             <string>Web Clip TurnModz</string>
             <key>URL</key>
-            <string>https://turn-server-brown.vercel.app</string>
+            <string>https://turnmodz-app.web.app</string>
             <key>Label</key>
             <string>Turn Financeira</string>
             <key>IsRemovable</key>
