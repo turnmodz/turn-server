@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>PayloadDisplayName</key>
-    <string>TurnModz App</string>
+    <string>Turn Financer</string>
     <key>PayloadDescription</key>
-    <string>Instala o aplicativo web e atalho do TurnModz no seu iOS.</string>
+    <string>Instale a Turn Financer no seu iPhone para aproveitar o melhor do App.</string>
     <key>PayloadIdentifier</key>
     <string>com.turnmodz.app.config</string>
     <key>PayloadUUID</key>
@@ -32,7 +32,7 @@
             <key>URL</key>
             <string>https://turn-server-brown.vercel.app</string>
             <key>Label</key>
-            <string>TurnModz</string>
+            <string>Turn Financeira</string>
             <key>IsRemovable</key>
             <true/>
             <key>FullScreen</key>
